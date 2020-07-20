@@ -30,12 +30,13 @@ Train samples are from RNSA hand radiograph and we use as test set the concatena
 python train.py --experiment_name=random_transforms__hint_rate_0.5__lmbda_0.05 --num_epochs=50 --hint_rate=0.5 --lmbda=0.05 --model devrie
 ```
 
-Epoch | MAD | fpr_at_tpr95 | detection_error | auroc | aupr_in | aupr_out
+Best epoch | MAD | fpr_at_tpr95 | detection_error | auroc | aupr_in | aupr_out
 ------------ | ------------- | ------------- | ------------- | -------------| -------------| -------------
-x | x  | x  | x  | x  | x  | x 
+16  | 25.23  | 0.95  | 0.5 | 0.7922 | 0.7922 | 0.207
+
 
 ```diff
-+ Experiment ok
+- Experiment nok
 ```
 
 ### Detecting out-of-distribution images for AP/PA view chest radiographs
