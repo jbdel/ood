@@ -30,9 +30,20 @@ Train samples are from RNSA hand radiograph and we use as test set the concatena
 python train.py --experiment_name=random_transforms__hint_rate_0.5__lmbda_0.05 --num_epochs=50 --hint_rate=0.5 --lmbda=0.05 --model devrie
 ```
 
+
 Best epoch | MAD | fpr_at_tpr95 | detection_error | auroc | aupr_in | aupr_out
 ------------ | ------------- | ------------- | ------------- | -------------| -------------| -------------
 16  | 25.23  | 0.95  | 0.5 | 0.7922 | 0.7922 | 0.207
+
+### Metrics
+
+1. **FPR at 95% TPR** is the probability that a negative (out-of-distribution) example is misclassified as positive (in-distribution) when the true positive rate (TPR) is as high as 95%. True positive rate can be computed by TPR = TP / (TP+FN), where TP and FN denote true positives and false negatives respectively. The false positive rate (FPR) can be computed by FPR = FP / (FP+TN), where FP and TN denote false positives and true negatives respectively.
+
+2. **Detection Error** is the misclassification probability when TPR is 95%, given by 0.5(1-TPR) + 0.5FPR, where positive and negative examples have equal probability of appearing in the test set.
+
+3. **AUROC** is the Area Under the Receiver Operating Characteristic curve, which is also a threshold-independent metric. The ROC curve depicts the relationship between TPR and FPR. The AUROC can be interpreted as the probability that a positive example is assigned a higher detection score than a negative example. A perfect detector corresponds to an AUROC score of 100%.
+
+4. **AUPR** is the Area under the Precision-Recall curve, which is another threshold independent metric. The PR curve is a graph showing the precision=TP/(TP+FP) and recall=TP/(TP+FN) against each other. The metric AUPR-In and AUPR-Out denote the area under the precision-recall curve where in-distribution and out-of-distribution images are specified as positives, respectively
 
 
 ```diff
