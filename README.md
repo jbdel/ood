@@ -27,13 +27,17 @@ Two experiments can be carried out.
 Train samples are from RNSA hand radiograph and we use as test set the concatenation of the RNSA test and MURA train set.
 
 ```
-python train.py --experiment_name=random_transforms__hint_rate_0.5__lmbda_0.05 --num_epochs=50 --hint_rate=0.5 --lmbda=0.05 --model devrie
+python train.py --experiment_name=random_transforms__hint_rate_0.5__lmbda_0.05 --num_epochs=50 --hint_rate=0.5 --lmbda=0.05 --model devries
 ```
 
 
 Best epoch | MAD | fpr_at_tpr95 | detection_error | auroc | aupr_in | aupr_out
 ------------ | ------------- | ------------- | ------------- | -------------| -------------| -------------
 16  | 25.23  | 0.95  | 0.5 | 0.7922 | 0.7922 | 0.207
+
+```diff
+- Experiment nok
+```
 
 ### Metrics
 
@@ -45,10 +49,6 @@ Best epoch | MAD | fpr_at_tpr95 | detection_error | auroc | aupr_in | aupr_out
 
 4. **AUPR** is the Area under the Precision-Recall curve, which is another threshold independent metric. The PR curve is a graph showing the precision=TP/(TP+FP) and recall=TP/(TP+FN) against each other. The metric AUPR-In and AUPR-Out denote the area under the precision-recall curve where in-distribution and out-of-distribution images are specified as positives, respectively
 
-
-```diff
-- Experiment nok
-```
 
 ### Detecting out-of-distribution images for AP/PA view chest radiographs
 
