@@ -4,131 +4,120 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import auc, roc_auc_score, roc_curve
 from torchvision.models.resnet import resnet50
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import MultiStepLR
+from densenet3 import DenseNet3
 from torchvision.transforms import Compose
+import torch.nn.functional as F
 
 from transforms import (
-  RepeatGrayscaleChannels,
-  Clahe,
-  RandomSquareCrop,
-  RandomHorizontalFlip,
-  Transpose,
-  ToTensor,
-  ToFloat,
-  ToLong,
+    RepeatGrayscaleChannels,
+    Clahe,
+    RandomSquareCrop,
+    RandomHorizontalFlip,
+    Transpose,
+    ToTensor,
+    ToFloat,
+    ToLong,
 )
 
 
 class ModelConfig(object):
 
-  def __init__(self):
-    self._net = None
-    self._label = None
-    self._criterion = None
-    self._optimizer = None
-    self._scheduler = None
-    self._train_input_transforms = None
-    self._test_input_transforms = None
-    self._train_label_transforms = None
-    self._test_label_transforms = None
-    self._error_metrics = None
-    self.reset_error_metrics()
+    def __init__(self, args):
+        self._args = args
+        self._net = None
+        self._label = None
+        self._criterion = None
+        self._optimizer = None
+        self._scheduler = None
+        self._train_input_transforms = None
+        self._test_input_transforms = None
+        self._train_label_transforms = None
+        self._test_label_transforms = None
+        self._error_metrics = None
 
-  @property
-  def optimizer(self):
-    if self._optimizer is None:
-      self._optimizer = optim.Adam(self.net.parameters(), lr=0.001)
+    @property
+    def optimizer(self):
+        if self._optimizer is None:
+            self._optimizer = torch.optim.SGD(self.net.parameters(), lr=0.1,
+                                              momentum=0.9, nesterov=True, weight_decay=1e-4)
+        return self._optimizer
 
-    return self._optimizer
+    @property
+    def scheduler(self):
+        if self._args.use_scheduler:
+            self._scheduler = MultiStepLR(self._optimizer, milestones=[150, 225], gamma=0.1)
+            return self._scheduler
+        return None
 
-  @property
-  def scheduler(self):
-    if self._scheduler is None:
-      self._scheduler = ReduceLROnPlateau(self.optimizer,
-                                          factor=0.1 ** 0.5,
-                                          patience=16,
-                                          verbose=True)
+    @property
+    def net(self):
+        raise NotImplementedError
 
-    return self._scheduler
+    @property
+    def criterion(self):
+        raise NotImplementedError
 
-  @property
-  def net(self):
-    raise NotImplementedError
+    @property
+    def train_input_transforms(self):
+        raise NotImplementedError
 
-  @property
-  def criterion(self):
-    raise NotImplementedError
+    @property
+    def test_input_transforms(self):
+        raise NotImplementedError
 
-  @property
-  def train_input_transforms(self):
-    raise NotImplementedError
+    @property
+    def train_label_transforms(self):
+        raise NotImplementedError
 
-  @property
-  def test_input_transforms(self):
-    raise NotImplementedError
-
-  @property
-  def train_label_transforms(self):
-    raise NotImplementedError
-
-  @property
-  def test_label_transforms(self):
-    raise NotImplementedError
-
-  @property
-  def error_metrics(self):
-    raise NotImplementedError
-
-  def update_error_metrics(self):
-    raise NotImplementedError
-
-  def reset_error_metrics(self):
-    raise NotImplementedError
+    @property
+    def test_label_transforms(self):
+        raise NotImplementedError
 
 
 class LarsonModelConfig(ModelConfig):
 
-  def __init__(self, age_range=(0, 240, 1), sex=True):
-    """
+    def __init__(self, args, age_range=(0, 240, 1), sex=True):
+        """
     Inputs:
     - age_range: A Python 2-tuple or 3-tuple passed to range, that represents
       the predicted age classes.
     - sex: A Python bool that represents whether or not to separate predicted
       age classes by sex.
     """
-    super().__init__()
-    self.age_range = age_range
-    self.sex = sex
-    self._num_ages = None
-    self._num_classes = None
+        super().__init__(args)
+        self.age_range = age_range
+        self.sex = sex
+        self._num_ages = None
+        self._num_classes = None
 
-  @property
-  def num_ages(self):
-    if self._num_ages is None:
-      self._num_ages = len(list(range(*self.age_range)))
+    @property
+    def num_ages(self):
+        if self._num_ages is None:
+            self._num_ages = len(list(range(*self.age_range)))
 
-    return self._num_ages
+        return self._num_ages
 
-  @property
-  def num_classes(self):
-    if self._num_classes is None:
-      self._num_classes = self.num_ages * 2 if self.sex else self.num_ages
+    @property
+    def num_classes(self):
+        if self._num_classes is None:
+            self._num_classes = self.num_ages * 2 if self.sex else self.num_ages
 
-    return self._num_classes
+        return self._num_classes
 
-  @property
-  def net(self):
-    """
+    @property
+    def net(self):
+        """
     Returns an instance of nn.Module.
     """
-    if self._net is None:
-      self._net = self.Network(self.num_classes)
+        if self._net is None:
+            self._net = self.Network(self.num_classes, self._args)
 
-    return self._net
+        return self._net
 
-  @property
-  def criterion(self):
-    """
+    @property
+    def criterion(self):
+        """
     In general, should return a criterion that expects:
     - One batch per output of self.net.__call__
     - One batch of the label yielded by the dataset, according to the label
@@ -139,14 +128,14 @@ class LarsonModelConfig(ModelConfig):
     a numpy array with shape (1,) representing the desired index into n
     categories.
     """
-    if self._criterion is None:
-      self._criterion = self.Criterion()
+        if self._criterion is None:
+            self._criterion = self.Criterion()
 
-    return self._criterion
+        return self._criterion
 
-  @property
-  def train_input_transforms(self):
-    """
+    @property
+    def train_input_transforms(self):
+        """
     Returns a list of Compose objects, one per input expected by self.net.
 
     Each Compose object expects a dict with keys:
@@ -155,281 +144,188 @@ class LarsonModelConfig(ModelConfig):
     - male
     and outputs the input in the format expected by self.net for that input.
     """
-    if self._train_input_transforms is None:
-      self._train_input_transforms = [
-        Compose([
-          lambda x: x["image_arr"],
-          RepeatGrayscaleChannels(3),
-          Clahe(),  # noop at the moment
-          RandomSquareCrop((224, 224)),
-          RandomHorizontalFlip(),
-          Transpose(),
-          ToTensor(),
-          ToFloat(),
-        ]),
-      ]
+        if self._train_input_transforms is None:
+            self._train_input_transforms = [
+                Compose([
+                    lambda x: x["image_arr"],
+                    RepeatGrayscaleChannels(3),
+                    Clahe(),  # noop at the moment
+                    RandomSquareCrop((224, 224)),
+                    RandomHorizontalFlip(),
+                    Transpose(),
+                    ToTensor(),
+                    ToFloat(),
+                ]),
+            ]
 
-    return self._train_input_transforms
+        return self._train_input_transforms
 
-  @property
-  def test_input_transforms(self):
-    if self._test_input_transforms is None:
-      self._test_input_transforms = [
-        Compose([
-          lambda x: x["image_arr"],
-          RepeatGrayscaleChannels(3),
-          Transpose(),
-          ToTensor(),
-          ToFloat(),
-        ]),
-      ]
+    @property
+    def test_input_transforms(self):
+        if self._test_input_transforms is None:
+            self._test_input_transforms = [
+                Compose([
+                    lambda x: x["image_arr"],
+                    RepeatGrayscaleChannels(3),
+                    Transpose(),
+                    ToTensor(),
+                    ToFloat(),
+                ]),
+            ]
 
-    return self._test_input_transforms
+        return self._test_input_transforms
 
-  @property
-  def train_label_transforms(self):
-    if self._train_label_transforms is None:
+    @property
+    def train_label_transforms(self):
+        if self._train_label_transforms is None:
 
-      def to_numpy_array(x):
-        index = x["skeletal_age"]
-        if self.sex and x["male"]:
-          index += self.num_ages
-        return np.array(index)
+            def to_numpy_array(x):
+                index = x["skeletal_age"]
+                if self.sex and x["male"]:
+                    index += self.num_ages
+                return np.array(index)
 
-      self._train_label_transforms = (
-        Compose([
-          to_numpy_array,
-          ToTensor(),
-          ToLong(),
-        ])
-      )
+            self._train_label_transforms = (
+                Compose([
+                    to_numpy_array,
+                    ToTensor(),
+                    ToLong(),
+                ])
+            )
 
-    return self._train_label_transforms
+        return self._train_label_transforms
 
-  @property
-  def test_label_transforms(self):
-    if self._test_label_transforms is None:
+    @property
+    def test_label_transforms(self):
+        if self._test_label_transforms is None:
 
-      def to_numpy_array(x):
-        index = x["skeletal_age"]
-        if self.sex and x["male"]:
-          index += self.num_ages
-        return np.array(index)
+            def to_numpy_array(x):
+                index = x["skeletal_age"]
+                if self.sex and x["male"]:
+                    index += self.num_ages
+                return np.array(index)
 
-      self._test_label_transforms = (
-        Compose([
-          to_numpy_array,
-          ToTensor(),
-          ToLong(),
-        ])
-      )
+            self._test_label_transforms = (
+                Compose([
+                    to_numpy_array,
+                    ToTensor(),
+                    ToLong(),
+                ])
+            )
 
-    return self._test_label_transforms
-
-  @property
-  def error_metrics(self):
-    return { "mad": np.mean(self._error_metrics["mad"]) }
-
-  def update_error_metrics(self, output_batches, label_batch, metadata_batch):
-    """
-    In general, expects:
-    - One batch per output of self.net.__call__
-    - One batch of the label yielded by the dataset, according to the label
-      transform
-    - One batch of the metadata yielded by the dataset
-
-    For this particular model, self.net.__call__ returns a single output
-    consisting of pre-softmax scores for n categories, and self.label returns
-    a numpy array with shape (1,) representing the desired index into n
-    categories.
-    """
-    scores_batch = []
-    for batch_iter, item in enumerate(metadata_batch["sex"], 0):
-      if item == "F":
-        scores = output_batches[batch_iter:batch_iter+1,:self.num_ages]
-      else:
-        scores = output_batches[batch_iter:batch_iter+1,self.num_ages:]
-
-      scores_batch.append(scores.detach().cpu().numpy().squeeze())
-
-    predictions = np.argmax(np.array(scores_batch), axis=1)
-    targets = np.array(metadata_batch["skeletal_age"]).astype(int)
-
-    error_metrics = { "mad": list(abs(predictions - targets)[metadata_batch["real"]]) }
-
-    for k, v in self._error_metrics.items():
-      v.extend(error_metrics[k])
-
-  def reset_error_metrics(self):
-    self._error_metrics = { "mad": [] }
+        return self._test_label_transforms
 
 
-  class Network(nn.Module):
+    class Network(nn.Module):
 
-    def __init__(self, num_classes):
-      super().__init__()
-      self._net = resnet50(pretrained=True).cuda()
-      self._net.fc = nn.Linear(2048, num_classes).cuda()
+        def __init__(self, num_classes, args):
+            super().__init__()
+            if args.network == "resnet":
+                self._net = resnet50().cuda()
+                self._net.fc = nn.Linear(2048, num_classes).cuda()
+            if args.network == "densenet3":
+                self._net = DenseNet3(depth=100, num_classes=num_classes, growth_rate=12, reduction=0.5).cuda()
 
-    def forward(self, inputs):
-      return self._net(inputs)
+        def forward(self, inputs):
+            return self._net(inputs)
 
-  class Criterion(nn.CrossEntropyLoss):
+    class Criterion(nn.CrossEntropyLoss):
 
-    pass
+        pass
 
 
 class DeVriesLarsonModelConfig(LarsonModelConfig):
 
-  def __init__(self, hint_rate=0.0, lmbda=1.0):
-    super().__init__()
-    self.hint_rate = hint_rate
-    self.lmbda = lmbda
+    def __init__(self, args, hint_rate=0.0, lmbda=1.0):
+        super().__init__(args)
+        self.hint_rate = hint_rate
+        self.lmbda = lmbda
 
-  @property
-  def criterion(self):
-    if self._criterion is None:
-      self._criterion = self.Criterion(hint_rate=self.hint_rate,
-                                       lmbda=self.lmbda)
+    @property
+    def criterion(self):
+        if self._criterion is None:
+            self._criterion = self.Criterion(hint_rate=self.hint_rate,
+                                             lmbda=self.lmbda)
 
-    return self._criterion
+        return self._criterion
 
-  @property
-  def error_metrics(self):
-    try:
-      auroc = roc_auc_score(self._error_metrics["real_targets"],
-                            self._error_metrics["confidence_probs"])
-    except:
-      auroc = None
-
-    try:
-      sorted_pairs = sorted(list(zip(self._error_metrics["real_targets"],
-                                     self._error_metrics["confidence_probs"])),
-                            key=lambda x: x[1])
-      targets_sorted_by_probs = list(map(lambda x: x[0], sorted_pairs))
-      count = np.ceil(0.05 * sum(targets_sorted_by_probs))
-      for i in range(len(targets_sorted_by_probs)):
-        if count <= 0:
-          break
-
-        if targets_sorted_by_probs[i]:
-          count -= 1
-      fn = sum(targets_sorted_by_probs[:i])
-      tn = i - fn
-      tp = sum(targets_sorted_by_probs[i:])
-      fp = len(targets_sorted_by_probs) - i - tp
-      fpr_at_tpr95 = fp/(fp+tn)
-      detection_error = 0.5*(1-0.95) + 0.5*fp/(fp+tn)
-    except:
-      fpr_at_tpr95 = None
-      detection_error = None
-
-    try:
-      fpr_1, tpr_1, _ = roc_curve(self._error_metrics["real_targets"],
-                                  self._error_metrics["confidence_probs"],
-                                  pos_label=1)
-      fpr_0, tpr_0, _ = roc_curve(self._error_metrics["real_targets"],
-                                  self._error_metrics["confidence_probs"],
-                                  pos_label=0)
-      auc_1 = auc(fpr_1, tpr_1)
-      auc_0 = auc(fpr_0, tpr_0)
-    except:
-      auc_1 = None
-      auc_0 = None
-
-    return {
-      "mad": np.mean(self._error_metrics["mad"]),
-      "fpr_at_tpr95": fpr_at_tpr95,
-      "detection_error": detection_error,
-      "auroc": auroc,
-      "aupr_in": auc_1,
-      "aupr_out": auc_0,
-    }
-
-  def update_error_metrics(self, output_batches, label_batch, metadata_batch):
-    """
+    def task_metric(self, task_score_batch, metadata_batch):
+        """
     output_batches consists of a batch of task scores and a batch of confidence
     scores
     """
-    task_score_batch, confidence_score_batch = output_batches
+        scores_batch = []
+        for batch_iter, item in enumerate(metadata_batch["sex"], 0):
+            if item == "F":
+                scores = task_score_batch[batch_iter:batch_iter + 1, :self.num_ages]
+            else:
+                scores = task_score_batch[batch_iter:batch_iter + 1, self.num_ages:]
 
-    scores_batch = []
-    for batch_iter, item in enumerate(metadata_batch["sex"], 0):
-      if item == "F":
-        scores = task_score_batch[batch_iter:batch_iter+1,:self.num_ages]
-      else:
-        scores = task_score_batch[batch_iter:batch_iter+1,self.num_ages:]
+            scores_batch.append(torch.argmax(scores, dim=1))
 
-      scores_batch.append(torch.argmax(scores, dim=1))
-
-    task_predictions = torch.cat(scores_batch).cpu().numpy()
-    task_targets = metadata_batch["skeletal_age"].numpy()
-
-    confidence_probs = nn.Sigmoid()(confidence_score_batch).detach().cpu().numpy()
-    real_targets = metadata_batch["real"].numpy()
-    # only counts mad for real ones
-    mad = abs(task_predictions - task_targets)[real_targets.astype(bool)]
-
-    error_metrics = {
-      "mad": list(mad),
-      "confidence_probs": list(confidence_probs),
-      "real_targets": list(real_targets)
-    }
-
-    for k, v in self._error_metrics.items():
-      v.extend(error_metrics[k])
-
-  def reset_error_metrics(self):
-    self._error_metrics = {
-      "mad": [],
-      "confidence_probs": [],
-      "real_targets": [],
-    }
+        task_predictions = torch.cat(scores_batch).cpu().numpy()
+        task_targets = metadata_batch["skeletal_age"].numpy()
+        mad = abs(task_predictions - task_targets)
+        return list(mad)
 
 
-  class Network(nn.Module):
+    class Network(nn.Module):
 
-    def __init__(self, num_classes):
-      super().__init__()
-      self._net = resnet50(pretrained=True).cuda()
-      self._net.fc = nn.Linear(2048, num_classes + 1).cuda()
+        def __init__(self, num_classes, args):
+            super().__init__()
+            if args.network == "resnet":
+                self._net = resnet50().cuda()
+                self._net.fc = nn.Linear(2048, num_classes).cuda()
+            if args.network == "densenet3":
+                self._net = DenseNet3(depth=100, num_classes=num_classes, growth_rate=12, reduction=0.5).cuda()
 
-    def forward(self, inputs):
-      scores = self._net(inputs)
-      confidence_score = scores[:,0]
-      task_scores = scores[:,1:]
+        def forward(self, inputs):
+            scores = self._net(inputs)
+            confidence_score = scores[:, 0]
+            task_scores = scores[:, 1:]
 
-      return task_scores, confidence_score
+            return task_scores, confidence_score
 
-  class Criterion(nn.Module):
+    class Criterion(nn.Module):
 
-    def __init__(self, hint_rate, lmbda):
-      """
+        def __init__(self, hint_rate, lmbda, beta=0.3):
+            """
       Inputs:
       - hint_rate: A Python float; hint_rate=1.0 means the model asks for all
         hints and hint_rate=0.0 means the model asks for no hints
       - lmbda: A Python float that represents the relative weighting between
         task loss and confidence loss
       """
-      super().__init__()
-      self.hint_rate = hint_rate
-      self.lmbda = lmbda
+            super().__init__()
+            self.hint_rate = hint_rate
+            self.lmbda = lmbda
+            self.beta = 0.3
 
-    def forward(self, inputs, target):
-      task_scores, confidence_score = inputs
-      task_probs = nn.Softmax(dim=1)(task_scores)
-      confidence_prob = nn.Sigmoid()(confidence_score)
-      _, num_classes = task_scores.size()
-      one_hot_target = nn.functional.one_hot(target, num_classes=num_classes)
+        def forward(self, inputs, target):
+            task_scores, confidence_score = inputs
+            task_probs = F.softmax(task_scores, dim=-1)
+            confidence_prob = torch.sigmoid(confidence_score)
+            _, num_classes = task_scores.size()
+            one_hot_target = nn.functional.one_hot(target, num_classes=num_classes)
 
-      mask = (torch.rand_like(confidence_prob) < self.hint_rate).float()
-      masked_confidence_prob = (mask * confidence_prob) + (1.0 - mask)
-      masked_confidence_prob = masked_confidence_prob.unsqueeze(1)
-      task_probs_pred = task_probs * masked_confidence_prob
-      task_probs_hint = one_hot_target.float() * (1.0 - masked_confidence_prob)
-      interpolated_task_probs = task_probs_pred + task_probs_hint
+            # Make sure we don't have any numerical instability
+            eps = 1e-12
+            task_probs = torch.clamp(task_probs, 0. + eps, 1. - eps)
+            confidence_prob = torch.clamp(confidence_prob, 0. + eps, 1. - eps)
 
-      task_loss = nn.NLLLoss()(torch.log(interpolated_task_probs), target)
-      confidence_loss = -torch.log(masked_confidence_prob).mean()
+            b = torch.bernoulli(torch.empty(confidence_prob.shape).uniform_(0, 1)).cuda()
+            conf = confidence_prob * b + (1 - b)
+            pred_new = task_probs * conf.unsqueeze(-1) + one_hot_target * (1 - conf.unsqueeze(-1))
+            pred_new = torch.log(pred_new)
 
-      return task_loss + self.lmbda * confidence_loss
+            xentropy_loss = nn.NLLLoss()(pred_new, target)
+            confidence_loss = torch.mean(-torch.log(confidence_prob))
+
+            total_loss = xentropy_loss + (self.lmbda * confidence_loss)
+
+            if self.beta > confidence_loss.data:
+                self.lmbda = self.lmbda / 1.01
+            elif self.beta <= confidence_loss.data:
+                self.lmbda = self.lmbda / 0.99
+
+            return total_loss, xentropy_loss.cpu().data.numpy(), confidence_loss.cpu().data.numpy()
