@@ -39,8 +39,9 @@ class ModelConfig(object):
     @property
     def optimizer(self):
         if self._optimizer is None:
-            self._optimizer = torch.optim.SGD(self.net.parameters(), lr=0.1,
-                                              momentum=0.9, nesterov=True, weight_decay=1e-4)
+            # self._optimizer = torch.optim.SGD(self.net.parameters(), lr=0.1,
+            #                                   momentum=0.9, nesterov=True, weight_decay=1e-4)
+            self._optimizer = optim.Adam(self.net.parameters(), lr=self._args.lr)
         return self._optimizer
 
     @property
@@ -221,7 +222,7 @@ class LarsonModelConfig(ModelConfig):
         def __init__(self, num_classes, args):
             super().__init__()
             if args.network == "resnet":
-                self._net = resnet50().cuda()
+                self._net = resnet50(pretrained=True).cuda()
                 self._net.fc = nn.Linear(2048, num_classes).cuda()
             if args.network == "densenet3":
                 self._net = DenseNet3(depth=100, num_classes=num_classes, growth_rate=12, reduction=0.5).cuda()
@@ -254,27 +255,34 @@ class DeVriesLarsonModelConfig(LarsonModelConfig):
     output_batches consists of a batch of task scores and a batch of confidence
     scores
     """
-        scores_batch = []
-        for batch_iter, item in enumerate(metadata_batch["sex"], 0):
-            if item == "F":
-                scores = task_score_batch[batch_iter:batch_iter + 1, :self.num_ages]
-            else:
-                scores = task_score_batch[batch_iter:batch_iter + 1, self.num_ages:]
-
-            scores_batch.append(torch.argmax(scores, dim=1))
-
-        task_predictions = torch.cat(scores_batch).cpu().numpy()
+        loss_dict = {}
         task_targets = metadata_batch["skeletal_age"].numpy()
-        mad = abs(task_predictions - task_targets)
-        return list(mad)
 
+        if "boneage_mad" in self._args.losses:
+            scores_batch = []
+            for batch_iter, item in enumerate(metadata_batch["sex"], 0):
+                if item == "F":
+                    scores = task_score_batch[batch_iter:batch_iter + 1, :self.num_ages]
+                else:
+                    scores = task_score_batch[batch_iter:batch_iter + 1, self.num_ages:]
+
+                scores_batch.append(torch.argmax(scores, dim=1))
+            task_predictions = torch.cat(scores_batch).cpu().numpy()
+            mad = abs(task_predictions - task_targets)
+            loss_dict['boneage_mad'] = list(mad)
+
+        if "accuracy" in self._args.losses:
+            task_predictions = torch.argmax(task_score_batch, dim=-1).cpu().numpy()
+            loss_dict['accuracy'] = list(task_predictions == task_targets)
+
+        return loss_dict
 
     class Network(nn.Module):
 
         def __init__(self, num_classes, args):
             super().__init__()
             if args.network == "resnet":
-                self._net = resnet50().cuda()
+                self._net = resnet50(pretrained=True).cuda()
                 self._net.fc = nn.Linear(2048, num_classes).cuda()
             if args.network == "densenet3":
                 self._net = DenseNet3(depth=100, num_classes=num_classes, growth_rate=12, reduction=0.5).cuda()

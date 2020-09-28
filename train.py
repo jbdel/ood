@@ -13,6 +13,7 @@ from models import (
     DeVriesLarsonModelConfig,
     LarsonModelConfig,
 )
+from collections import defaultdict
 
 
 def main():
@@ -21,8 +22,6 @@ def main():
                         help="Path to write checkpoints, results, etc., relative to 'checkpoints/'")
     parser.add_argument("--checkpoint", default="",
                         help="Path to checkpoint to load, relative to 'checkpoints/{args.experiment_name}/'. If empty, starts from scratch.")
-    parser.add_argument("--overfit", default=False,
-                        help="Whether or not to overfit on the test dataset. Turns off random transforms.")
     parser.add_argument("--model", default="default",
                         help="Model to train (Options: devries|default).")
     parser.add_argument("--num_epochs", type=int,
@@ -32,6 +31,10 @@ def main():
     parser.add_argument("--lmbda", type=float)
     parser.add_argument("--network", type=str, default="resnet")
     parser.add_argument("--use_scheduler", type=bool, default=False)
+    parser.add_argument("--lr", type=int, default=0.001)
+    parser.add_argument('-losses', nargs='+', default=["boneage_mad", "accuracy"])
+
+
     args = parser.parse_args()
 
     if args.model == "devries":
@@ -89,12 +92,12 @@ def main():
                               num_workers=4)
 
     test_true_loader = DataLoader(LarsonDataset(**test_true_dataset_kwargs),
-                                  batch_size=32,
+                                  batch_size=16,
                                   shuffle=False,
                                   num_workers=4)
 
     test_false_loader = DataLoader(LarsonDataset(**test_false_dataset_kwargs),
-                                   batch_size=32,
+                                   batch_size=16,
                                    shuffle=False,
                                    num_workers=4)
 
@@ -134,7 +137,8 @@ def main():
 
         def evaluate(data_loader, mode="confidence"):
             out_conf = []
-            out_mad = []
+            ind_metric = defaultdict(list)
+
             for test_iter, sample in enumerate(data_loader, 0):
                 inputs_batch, label_batch, metadata_batch = sample
 
@@ -142,19 +146,25 @@ def main():
                 cuda_inputs_batch = list(map(lambda x: x.cuda(), inputs_batch))
                 task_sore, confidence = net(*cuda_inputs_batch)
 
-                mad = model_config.task_metric(task_sore,
+                # manage in domain metric
+                ind_metric = model_config.task_metric(task_sore,
                                                metadata_batch)
+                for k, v in ind_metric.items():
+                    ind_metric[k].extend(v)
+
+                # save confidence of ood metrics
                 confidence = torch.sigmoid(confidence)
                 confidence = confidence.data.cpu().numpy()
                 out_conf.append(confidence)
-                out_mad.extend(mad)
 
             out_conf = np.concatenate(out_conf)
-            out_mad = np.mean(out_mad)
 
-            return out_conf, out_mad
+            for k, v in ind_metric.items():
+                ind_metric[k] = np.mean(v)
 
-        ind_confs, ind_mad = evaluate(test_true_loader)
+            return out_conf, ind_metric
+
+        ind_confs, ind_metric = evaluate(test_true_loader)
         ind_labels = np.ones(ind_confs.shape[0])
 
         ood_confs, _ = evaluate(test_false_loader)
@@ -164,6 +174,8 @@ def main():
         scores = np.concatenate([ind_confs, ood_confs])
 
         error_metrics = calc_metrics(scores, labels)
+        error_metrics.update(ind_metric)
+
         error_metric_str = ", ".join([f"{k}: {v}" for k, v in error_metrics.items()])
         print(f"\rEpoch: {epoch}, {error_metric_str}\n")
 

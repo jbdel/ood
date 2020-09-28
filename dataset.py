@@ -56,7 +56,6 @@ class LarsonDataset(Dataset):
         ]
 
         label = self.label_transforms({
-            "image_arr": image_arr,
             "skeletal_age": skeletal_age,
             "male": male,
             "real": real,
