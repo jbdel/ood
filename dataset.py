@@ -1,71 +1,92 @@
-import os
+from transforms import (
+    RepeatGrayscaleChannels,
+    Clahe,
+    RandomSquareCrop,
+    RandomHorizontalFlip,
+    Transpose,
+    ToTensor,
+    ToFloat,
+    ToLong,
+)
 import pandas as pd
 import numpy as np
-import torch
-from PIL import ImageFile, Image
+from PIL import ImageFile
 from torch.utils.data import Dataset
+from torchvision.transforms import Compose
+import utils
+import os
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+test_input_transforms = Compose([
+    RepeatGrayscaleChannels(3),
+    Transpose(),
+    ToTensor(),
+    ToFloat(),
+])
+
+train_input_transforms = Compose([
+    RepeatGrayscaleChannels(3),
+    Clahe(),  # noop at the moment
+    RandomSquareCrop((224, 224)),
+    RandomHorizontalFlip(),
+    Transpose(),
+    ToTensor(),
+    ToFloat(),
+])
+
+label_transform = Compose([
+    ToTensor(),
+    ToLong(),
+])
 
 
 class LarsonDataset(Dataset):
 
     def __init__(self,
-                 csv_file,
-                 root_dir,
-                 input_transforms,
-                 label_transforms):
-        self.df = pd.read_csv(csv_file)
+                 name=None,
+                 mode=None,
+                 root_dir=None,
+                 csv_file=None,
+                 load_memory=False):
+        self.name = name
+        self.mode = mode
+        assert self.mode in ['idd', 'ood']
+        assert self.name in ['retina', 'skeletal-age', 'mura', 'mimic-crx']
         self.root_dir = root_dir
-        self.input_transforms = input_transforms
-        self.label_transforms = label_transforms
+        self.df = pd.read_csv(os.path.join(root_dir, csv_file))
+        self.load_memory = load_memory
 
-        self.image_arrs = []
-        for index in range(len(self.df)):
-            image_filename = f"{self.root_dir}/{self.df.iloc[index, 0]}.npy"
-            try:
-                self.image_arrs.append(np.load(image_filename))
-            except:
-                print(f"image_filename: {image_filename}")
-                raise Exception
+        # Load into cpu ?
+        if self.load_memory:
+            self.image_arrs = []
+            for index in range(len(self.df)):
+                image_filename = f"{self.root_dir}/{self.df.iloc[index, 0]}.npy"
+                try:
+                    self.image_arrs.append(np.load(image_filename))
+                except:
+                    print(f"image_filename: {image_filename}")
+                    raise Exception
 
     def __len__(self):
         return len(self.df)
 
-
     def __getitem__(self, index):
-        if torch.is_tensor(index):
-            index = index.tolist()
 
-        image_arr = self.image_arrs[index]
+        if self.load_memory:
+            image_arr = self.image_arrs[index]
+        else:
+            image_filename = f"{self.root_dir}/{self.df.iloc[index, 0]}.npy"
+            image_arr = np.load(image_filename)
 
-        skeletal_age = self.df.iloc[index, 1]
-        male = self.df.iloc[index, 2]
-        try:
-            real = self.df.iloc[index, 3]
-        except:
-            real = True
+        if self.mode == "idd":
+            inputs = train_input_transforms(image_arr)
+        elif self.mode == "ood":
+            inputs = test_input_transforms(image_arr)
+        else:
+            raise NotImplementedError
 
-        inputs = [
-            compose_obj({
-                "image_arr": image_arr,
-                "skeletal_age": skeletal_age,
-                "male": male,
-                "real": real,
-            }) for compose_obj in self.input_transforms
-        ]
+        metadata = utils.get_metadata(self.name, self.df, index)
+        label = label_transform(utils.get_label(self.name, self.df, index))
 
-        label = self.label_transforms({
-            "skeletal_age": skeletal_age,
-            "male": male,
-            "real": real,
-        })
-
-        metadata = {
-            "id": self.df.iloc[index, 0],
-            "index": index,
-            "skeletal_age": skeletal_age,
-            "sex": "M" if male else "F",
-            "real": int(real),
-        }
         return inputs, label, metadata
