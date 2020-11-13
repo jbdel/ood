@@ -98,10 +98,11 @@ class DeVriesLarsonModelConfig(object):
             if 'devries' in self.args.mode:
                 confidence_loss = torch.mean(-torch.log(confidence_prob))
                 total_loss = xentropy_loss + (self.lmbda * confidence_loss)
-                if self.beta > confidence_loss.data:
-                    self.lmbda = self.lmbda / 1.01
-                elif self.beta <= confidence_loss.data:
-                    self.lmbda = self.lmbda / 0.99
+                if self.args.use_budget:
+                    if self.beta > confidence_loss.data:
+                        self.lmbda = self.lmbda / 1.01
+                    elif self.beta <= confidence_loss.data:
+                        self.lmbda = self.lmbda / 0.99
             else:
                 confidence_loss = torch.tensor(0)
                 total_loss = xentropy_loss

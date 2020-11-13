@@ -29,11 +29,12 @@ def main():
     parser.add_argument("--network", type=str, default="resnet")
     # Hyper params
     parser.add_argument("--num_epochs", type=int, default=300)
-    parser.add_argument("--hint_rate", type=float, default=0.5)
     parser.add_argument("--beta", type=float, default=0.3)
     parser.add_argument("--lmbda", type=float, default=0.1)
     parser.add_argument("--batch_size", type=int, default=64)
-
+    parser.add_argument("--hint", type=bool, default=False)
+    parser.add_argument("--hint_rate", type=float, default=0.5)
+    parser.add_argument("--use_budget", type=bool, default=False)
     # Training params
     parser.add_argument("--use_scheduler", type=bool, default=False)
     parser.add_argument("--lr", type=int, default=1e-3)
@@ -47,7 +48,6 @@ def main():
 
     args = parser.parse_args()
     args = utils.compute_args(args)
-
     # Create dataloader according to experiments
     loader_args = {'name': args.idd_name,
                    'mode': 'idd',

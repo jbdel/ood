@@ -33,6 +33,7 @@ def main():
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--hint", type=bool, default=False)
     parser.add_argument("--hint_rate", type=float, default=0.5)
+    parser.add_argument("--use_budget", type=bool, default=False)
 
     # Training params
     parser.add_argument("--use_scheduler", type=bool, default=False)
