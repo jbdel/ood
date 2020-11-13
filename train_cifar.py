@@ -5,7 +5,8 @@ import time
 import torch
 import torch.nn as nn
 from metrics import calc_metrics
-from torch.utils.data import DataLoader, ConcatDataset
+from torch.utils.data import DataLoader, ConcatDataset, Dataset
+import torchvision.datasets as dset
 from dataset import LarsonDataset
 from models import (
     DeVriesLarsonModelConfig,
@@ -28,18 +29,17 @@ def main():
     parser.add_argument("--network", type=str, default="resnet")
     # Hyper params
     parser.add_argument("--num_epochs", type=int, default=300)
+    parser.add_argument("--hint_rate", type=float, default=0.5)
     parser.add_argument("--beta", type=float, default=0.3)
     parser.add_argument("--lmbda", type=float, default=0.1)
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--hint", type=bool, default=False)
-    parser.add_argument("--hint_rate", type=float, default=0.5)
 
     # Training params
     parser.add_argument("--use_scheduler", type=bool, default=False)
     parser.add_argument("--lr", type=int, default=1e-3)
     parser.add_argument('--losses', nargs='+', default=["boneage_mad", "accuracy"])
     parser.add_argument('--early_stop_metric', type=str, default="fpr_at_95_tpr")
-    parser.add_argument('--early_stop', type=int, default=5)
+    parser.add_argument('--early_stop', type=int, default=10)
     parser.add_argument('--eval_start', type=int, default=1)
     # Misc
     parser.add_argument("--checkpoint", default="")
@@ -54,34 +54,87 @@ def main():
                    'root_dir': args.root[args.idd_name],
                    'csv_file': 'train.csv',
                    'load_memory': args.load_memory}
+    import torchvision.transforms as trn
+    train_data = dset.MNIST('MNIST', train=True, transform=trn.ToTensor(),download=True,)
+    test_data = dset.MNIST('MNIST', train=False, transform=trn.ToTensor(),download=True,)
+    num_classes = 10
 
-    train_loader = DataLoader(LarsonDataset(**loader_args),
-                              batch_size=args.batch_size,
-                              shuffle=True,
-                              num_workers=4)
 
-    test_true_loader = DataLoader(LarsonDataset(**dict(loader_args, **{'csv_file': 'test.csv'})),
-                                  batch_size=16,
-                                  shuffle=False,
-                                  num_workers=4)
-
+    train_loader = torch.utils.data.DataLoader(
+        train_data, batch_size=args.batch_size, shuffle=True,
+        num_workers=4, pin_memory=True)
+    test_true_loader = torch.utils.data.DataLoader(
+        test_data, batch_size=args.batch_size, shuffle=False,
+        num_workers=4, pin_memory=True)
+    print(len(train_loader))
+    print(len(test_true_loader))
     test_false_loaders = {}
-    for ood_name in args.ood_name:
-        test_false_loaders[ood_name] = DataLoader(LarsonDataset(**{'name': ood_name,
-                                                                   'mode': 'ood',
-                                                                   'root_dir': args.root[ood_name],
-                                                                   'csv_file': 'test.csv',
-                                                                   'load_memory': False
-                                                                   }),
-                                                  batch_size=16,
-                                                  shuffle=False,
-                                                  num_workers=4)
+
+    # /////////////// gaussian Noise ///////////////
+
+
+    dummy_targets = torch.ones(5000)
+    ood_data = torch.from_numpy(
+        np.clip(np.random.normal(size=(5000, 1, 28, 28),
+                                 loc=0.5, scale=0.5).astype(np.float32), 0, 1))
+    ood_data = torch.utils.data.TensorDataset(ood_data, dummy_targets)
+    ood_loader = torch.utils.data.DataLoader(ood_data, batch_size=16, shuffle=True)
+    test_false_loaders["gaussian"] = ood_loader
+
+    # /////////////// Bernoulli Noise ///////////////
+
+    dummy_targets = torch.ones(5000)
+    ood_data = torch.from_numpy(np.random.binomial(
+        n=1, p=0.5, size=(5000, 1, 28, 28)).astype(np.float32))
+    ood_data = torch.utils.data.TensorDataset(ood_data, dummy_targets)
+    ood_loader = torch.utils.data.DataLoader(ood_data, batch_size=16, shuffle=True)
+
+    test_false_loaders["Bernoulli"] = ood_loader
+
+    # /////////////// CIFAR data ///////////////
+
+    ood_data = dset.CIFAR10(
+        'cifar', train=False, download=True,
+        transform=trn.Compose([trn.Resize(28),
+                               trn.Lambda(lambda x: x.convert('L', (0.2989, 0.5870, 0.1140, 0))),
+                               trn.ToTensor()]))
+    ood_loader = torch.utils.data.DataLoader(ood_data, batch_size=16, shuffle=True,
+                                             num_workers=4, pin_memory=True)
+    test_false_loaders["CIFAR"] = ood_loader
 
     model_config = DeVriesLarsonModelConfig(args=args,
                                             hint_rate=args.hint_rate,
                                             lmbda=args.lmbda,
                                             beta=args.beta)
-    net = model_config.net
+
+    def gelu(x):
+        return torch.sigmoid(1.702 * x) * x
+        # return 0.5 * x * (1 + torch.tanh(x * 0.7978845608 * (1 + 0.044715 * x * x)))
+
+    class ConvNet(nn.Module):
+        def __init__(self):
+            super(ConvNet, self).__init__()
+            self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
+            self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
+            self.conv2_drop = nn.Dropout2d()
+            self.fc1 = nn.Linear(320, 50)
+            self.fc2 = nn.Linear(50, 10)
+            self.fc3 = nn.Linear(50, 1)
+
+        def forward(self, x):
+            import torch.nn.functional as F
+
+            x = gelu(F.max_pool2d(self.conv1(x), 2))
+            x = gelu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
+            x = x.view(-1, 320)
+            x = gelu(self.fc1(x))
+            # x = F.dropout(x)
+            return self.fc2(x), self.fc3(x)
+
+    net = ConvNet().cuda()
+    import torch.optim as optim
+
+    optimizer = optim.Adam(net.parameters(), lr=1e-3)
     loss_plots = Plot(idd_name=args.idd_name, early_stop_metric=args.early_stop_metric)
 
     if torch.cuda.device_count() > 1:
@@ -101,13 +154,13 @@ def main():
         train_start = time.time()
         # Train phases
         net.train()
-        for train_iter, sample in enumerate(train_loader, 0):
-            model_config.optimizer.zero_grad()
-            images, labels, _ = sample
-            output_batches = net(images.cuda())
+        for train_iter, (data, labels) in enumerate(train_loader, 0):
+            optimizer.zero_grad()
+            data, labels = data.cuda(), labels.cuda()
+            output_batches = net(data.cuda())
             total_loss, task_loss, confidence_loss = model_config.criterion(output_batches, labels.cuda())
             total_loss.backward()
-            model_config.optimizer.step()
+            optimizer.step()
 
             print(
                 "\r[Epoch {}][Step {}/{}] Loss: {:.2f} [Task: {:.2f}, Confidence: {:.2f}, lambda: {:.2f}], Lr: {:.2e}, ES: {}, {:.2f} m remaining".format(
@@ -118,7 +171,7 @@ def main():
                     task_loss.cpu().data.numpy(),
                     confidence_loss.cpu().data.numpy(),
                     model_config.criterion.lmbda,
-                    *[group['lr'] for group in model_config.optimizer.param_groups],
+                    *[group['lr'] for group in optimizer.param_groups],
                     early_stop,
                     ((time.time() - train_start) / (train_iter + 1)) * (
                             (len(train_loader.dataset) / args.batch_size) - train_iter) / 60,
@@ -132,11 +185,11 @@ def main():
                 confidences = []
                 idd_metrics = defaultdict(list)
 
-                for test_iter, sample in enumerate(data_loader, 0):
-                    images, labels, _ = sample
+                for test_iter, (data, labels) in enumerate(data_loader, 0):
+                    data = data.view(-1, 1, 28, 28).cuda()
 
                     # Reassigns inputs_batch and label_batch to cuda
-                    pred, confidence = net(images.cuda())
+                    pred, confidence = net(data.cuda())
                     labels = labels.data.cpu().numpy()
 
                     # manage in domain metric
@@ -154,7 +207,7 @@ def main():
                             idd_metrics[k].extend(v)
 
                     # Get confidence in prediction
-                    confidences.extend(get_confidence(net, images, pred, confidence, args))
+                    confidences.extend(get_confidence(net, data, pred, confidence, args))
 
                 confidences = np.array(confidences)
                 if idd:
@@ -218,7 +271,7 @@ def main():
                                       {
                                           "init_epoch": epoch + 1,
                                           "net": net.state_dict(),
-                                          "optimizer": model_config.optimizer.state_dict(),
+                                          "optimizer": optimizer.state_dict(),
                                           "scheduler": model_config.scheduler.state_dict() if args.use_scheduler else None,
                                           "ood_metrics": ood_metric_dicts,
                                           "ind_metrics": ind_metrics,

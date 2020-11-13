@@ -1,6 +1,9 @@
 from sklearn.metrics import roc_curve, auc, precision_recall_curve
 import matplotlib.pyplot as plt
 import numpy as np
+import os
+import seaborn as sns
+sns.set_theme(style="darkgrid")
 
 
 def auroc(preds, labels):
@@ -27,6 +30,11 @@ def aupr(preds, labels):
     """
     precision, recall, _ = precision_recall_curve(labels, preds)
     return auc(recall, precision)
+
+
+def num_95_tpr(preds, labels):
+    fpr, tpr, _ = roc_curve(labels, preds)
+    return sum(tpr > 0.95)
 
 
 def fpr_at_95_tpr(preds, labels):
@@ -91,14 +99,27 @@ def calc_metrics(predictions, labels):
             True binary labels in range {0, 1} or {-1, 1}.
     """
 
-    return {
+    return {k: round(v, 3) for k, v in {
         'fpr_at_95_tpr': fpr_at_95_tpr(predictions, labels),
         'detection_error': detection_error(predictions, labels),
         'auroc': auroc(predictions, labels),
         'aupr_in': aupr(predictions, labels),
-        'aupr_out': aupr([-a for a in predictions], [1 - a for a in labels])
-    }
+        'aupr_out': aupr([-a for a in predictions], [1 - a for a in labels]),
+        'num_95_tpr': num_95_tpr(predictions, labels),
+    }.items()}
 
+
+def plot_metrics(scores, labels, ind_confs, ood_confs, checkpoints_folder, name):
+    os.makedirs(os.path.join(checkpoints_folder, 'roc'), exist_ok=True)
+    os.makedirs(os.path.join(checkpoints_folder, 'pr'), exist_ok=True)
+    # os.makedirs(os.path.join(checkpoints_folder, 'bar'), exist_ok=True)
+    os.makedirs(os.path.join(checkpoints_folder, 'hist'), exist_ok=True)
+
+    plot_roc(scores, labels).savefig(os.path.join(checkpoints_folder, 'roc', name))
+    plot_pr(scores, labels).savefig(os.path.join(checkpoints_folder, 'pr', name))
+    # plot_barcode(scores, labels).savefig(os.path.join(checkpoints_folder, 'bar', name))
+    plot_devries_histograms(ind_confs, ood_confs, scores).savefig(os.path.join(checkpoints_folder, 'hist', name))
+    plt.close('all')
 
 def plot_roc(preds, labels, title="Receiver operating characteristic"):
     """Plot an ROC curve based on unthresholded predictions and true binary labels.
@@ -136,7 +157,7 @@ def plot_roc(preds, labels, title="Receiver operating characteristic"):
     plt.ylabel('True Positive Rate')
     plt.title(title)
     plt.legend(loc="lower right")
-    plt.show()
+    return plt
 
 
 def plot_pr(preds, labels, title="Precision recall curve"):
@@ -167,7 +188,19 @@ def plot_pr(preds, labels, title="Precision recall curve"):
     plt.ylabel('Precision')
     plt.title(title)
     plt.legend(loc="lower right")
-    plt.show()
+    return plt
+
+
+def plot_classification(corr, conf, checkpoints_folder, name, bins=50):
+    # Plot histogram of correctly classified and misclassified examples
+    os.makedirs(os.path.join(checkpoints_folder, 'classif'), exist_ok=True)
+    plt.figure()
+    sns.histplot(conf[corr].ravel(), kde=False, bins=bins, stat="density", label='Correct', color="#AECFBA")
+    sns.histplot(conf[np.invert(corr)].ravel(), kde=False, bins=bins, stat="density", label='Incorrect', color="#AABAD7")
+    plt.xlabel('Confidence')
+    plt.ylabel('Density')
+    plt.legend(name)
+    plt.savefig(os.path.join(checkpoints_folder, 'classif', name))
 
 
 def plot_barcode(preds, labels):
@@ -186,4 +219,22 @@ def plot_barcode(preds, labels):
     ax = fig.add_axes([0.3, 0.1, 0.6, 0.1], **axprops)
     ax.imshow(x.reshape((1, -1, 3)), **barprops)
 
-    plt.show()
+    return fig
+
+
+def plot_devries_histograms(ind_scores, ood_scores, scores, name='histogram'):
+    # Plot histogram of correctly classified and misclassified examples in visdom
+    ranges = (np.min(scores), np.max(scores))
+    plt.figure()
+    sns.histplot(ind_scores.ravel(), binrange=ranges, kde=False, bins=50, stat="density",
+                 label='In-distribution', color="#AECFBA")
+
+    sns.histplot(ood_scores.ravel(), binrange=ranges, kde=False, bins=50, stat="density",
+                 label='Out-of-distribution', color="#AABAD7")
+
+    plt.xlabel('Confidence')
+    plt.ylabel('Density')
+    plt.title(name)
+    plt.legend()
+
+    return plt

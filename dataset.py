@@ -1,44 +1,77 @@
-from transforms import (
-    RepeatGrayscaleChannels,
-    Clahe,
-    RandomSquareCrop,
-    RandomHorizontalFlip,
-    Transpose,
-    ToTensor,
-    ToFloat,
-    ToLong,
-)
 import pandas as pd
 import numpy as np
-from PIL import ImageFile
+from PIL import Image, ImageFile
 from torch.utils.data import Dataset
-from torchvision.transforms import Compose
+from torchvision.transforms import Compose, RandomHorizontalFlip, RandomResizedCrop, Resize, ToTensor
 import utils
 import os
+import torch
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 test_input_transforms = Compose([
-    RepeatGrayscaleChannels(3),
-    Transpose(),
-    ToTensor(),
-    ToFloat(),
+    Resize((224, 224)),
+    ToTensor()
 ])
+
+
+class Cutout(object):
+    """Randomly mask out one or more patches from an image.
+       https://arxiv.org/abs/1708.04552
+    Args:
+        length (int): The length (in pixels) of each square patch.
+    """
+
+    def __init__(self, length):
+        self.length = length
+
+    def __call__(self, img):
+        """
+        Args:
+            img (Tensor): Tensor image of size (C, H, W).
+        Returns:
+            Tensor: Image with n_holes of dimension length x length cut out of it.
+        """
+
+        h = img.size(1)
+        w = img.size(2)
+
+        if np.random.choice([0, 1]):
+            mask = np.ones((h, w), np.float32)
+
+            y = np.random.randint(h)
+            x = np.random.randint(w)
+
+            y1 = int(np.clip(y - self.length / 2, 0, h))
+            y2 = int(np.clip(y + self.length / 2, 0, h))
+            x1 = int(np.clip(x - self.length / 2, 0, w))
+            x2 = int(np.clip(x + self.length / 2, 0, w))
+
+            mask[y1: y2, x1: x2] = 0.
+
+            mask = torch.from_numpy(mask)
+            mask = mask.expand_as(img)
+            img = img * mask
+
+        return img
+
 
 train_input_transforms = Compose([
-    RepeatGrayscaleChannels(3),
-    Clahe(),  # noop at the moment
-    RandomSquareCrop((224, 224)),
+    RandomResizedCrop((224, 224)),
     RandomHorizontalFlip(),
-    Transpose(),
     ToTensor(),
-    ToFloat(),
+    Cutout(16 * 7),
 ])
 
-label_transform = Compose([
-    ToTensor(),
-    ToLong(),
-])
+
+def open_file(o):
+    if not os.path.exists(o):
+        print(o)
+        raise FileNotFoundError()
+    if '.npy' in o:
+        return Image.fromarray(np.load(o)).convert('RGB')
+    else:  # jpg
+        return Image.open(str(o)).convert('RGB')
 
 
 class LarsonDataset(Dataset):
@@ -49,6 +82,7 @@ class LarsonDataset(Dataset):
                  root_dir=None,
                  csv_file=None,
                  load_memory=False):
+        super(LarsonDataset, self).__init__()
         self.name = name
         self.mode = mode
         assert self.mode in ['idd', 'ood']
@@ -61,9 +95,9 @@ class LarsonDataset(Dataset):
         if self.load_memory:
             self.image_arrs = []
             for index in range(len(self.df)):
-                image_filename = f"{self.root_dir}/{self.df.iloc[index, 0]}.npy"
+                image_filename = f"{self.root_dir}/{self.df.iloc[index, 0]}"
                 try:
-                    self.image_arrs.append(np.load(image_filename))
+                    self.image_arrs.append(open_file(image_filename))
                 except:
                     print(f"image_filename: {image_filename}")
                     raise Exception
@@ -76,8 +110,7 @@ class LarsonDataset(Dataset):
         if self.load_memory:
             image_arr = self.image_arrs[index]
         else:
-            image_filename = f"{self.root_dir}/{self.df.iloc[index, 0]}.npy"
-            image_arr = np.load(image_filename)
+            image_arr = open_file(f"{self.root_dir}/{self.df.iloc[index, 0]}")
 
         if self.mode == "idd":
             inputs = train_input_transforms(image_arr)
@@ -86,7 +119,7 @@ class LarsonDataset(Dataset):
         else:
             raise NotImplementedError
 
-        metadata = utils.get_metadata(self.name, self.df, index)
-        label = label_transform(utils.get_label(self.name, self.df, index))
+        # metadata = utils.get_metadata(self.name, self.df, index)
+        label = utils.get_label(self.name, self.df, index)
 
-        return inputs, label, metadata
+        return inputs, label, torch.tensor(0)
