@@ -1,7 +1,7 @@
 import torch
 import glob
 import os
-path = "checkpoints/mimic_devries_acc/"
+path = "retina_baseline"
 ckpt = glob.glob(os.path.join(path,'*.pth'))[0]
 print(ckpt)
 

@@ -86,7 +86,7 @@ class LarsonDataset(Dataset):
         self.name = name
         self.mode = mode
         assert self.mode in ['idd', 'ood']
-        assert self.name in ['retina', 'skeletal-age', 'mura', 'mimic-crx']
+        assert self.name in ['retina', 'skeletal-age', 'mura', 'mimic-crx', 'drimdb']
         self.root_dir = root_dir
         self.df = pd.read_csv(os.path.join(root_dir, csv_file))
         self.load_memory = load_memory

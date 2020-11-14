@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision.models.resnet import *
 from torch.optim.lr_scheduler import MultiStepLR
-from densenet3 import DenseNet3
 import torch.nn.functional as F
 
 
@@ -34,7 +33,7 @@ class DeVriesLarsonModelConfig(object):
             self.num_classes = args.num_classes
             self.dropout = nn.Dropout(p=0.5)
             if args.network == "resnet":
-                self._net = resnet50(pretrained=False)
+                self._net = resnet50(pretrained=True)
                 in_features = self._net.fc.in_features
                 self._net = torch.nn.Sequential(*list(self._net.children())[:-1])
                 self.classifier = nn.Linear(in_features, self.num_classes)

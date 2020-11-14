@@ -199,7 +199,7 @@ def plot_classification(corr, conf, checkpoints_folder, name, bins=50):
     sns.histplot(conf[np.invert(corr)].ravel(), kde=False, bins=bins, stat="density", label='Incorrect', color="#AABAD7")
     plt.xlabel('Confidence')
     plt.ylabel('Density')
-    plt.legend(name)
+    plt.legend()
     plt.savefig(os.path.join(checkpoints_folder, 'classif', name))
 
 

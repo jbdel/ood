@@ -40,6 +40,8 @@ def get_label(name, df, index):
         label = df.iloc[index, 1]
     elif name == 'mimic-crx':
         label = df.iloc[index, 2]
+    elif name == 'drimdb':
+        label = df.iloc[index, 1]
     else:
         raise NotImplementedError
 
@@ -51,6 +53,7 @@ def compute_args(args):
     args.root = {'skeletal-age': 'data/skeletal-age/',
                  'retina': 'data/retina/',
                  'mura': 'data/mura/',
+                 'drimdb': 'data/drimdb/',
                  'mimic-crx': 'data/mimic-crx'
                  }
     # Num classes
